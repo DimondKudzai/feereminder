@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Upload Debtors{% endblock %}
+{% block content %}
+<div class="nav">
+    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+    <a href="{{ url_for('upload') }}">Upload</a>
+    <a href="{{ url_for('settings') }}">Settings</a>
+</div>
+
+<div class="card">
+    <h2>Upload Debtors List</h2>
+    <p style="color:#5f6368; font-size:14px; margin:8px 0 16px 0;">
+        Upload PDF or Excel with columns: Name, Grade, Balance, Phone
+    </p>
+    
+    <form method="post" enctype="multipart/form-data">
+        <label>Select File</label>
+        <input type="file" name="file" accept=".pdf,.xlsx,.csv" required>
+        
+        <label>SMS Template</label>
+        <select name="template" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:6px; margin:8px 0 16px 0;">
+            <option value="first">First Reminder - Polite</option>
+            <option value="second">Second Reminder - Firm</option>
+            <option value="final">Final Notice - Urgent</option>
+        </select>
+        
+        <button type="submit" class="btn">Upload & Queue SMS</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>How it works</h3>
+    <p style="font-size:14px; color:#5f6368;">
+        1. Export debtors from Pastel/QuickBooks as PDF or Excel<br>
+        2. Upload here<br>
+        3. SMS sent automatically in background<br>
+        4. Check Dashboard for delivery status
+    </p>
+</div>
+{% endblock %}

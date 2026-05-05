@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="nav">
+    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+    <a href="{{ url_for('upload') }}">Upload</a>
+    <a href="{{ url_for('settings') }}">Settings</a>
+</div>
+
+<div class="stats">
+    <div class="stat">
+        <div class="stat-num">{{ stats.total_sent }}</div>
+        <div class="stat-label">SMS Sent</div>
+    </div>
+    <div class="stat">
+        <div class="stat-num">${{ stats.total_collected }}</div>
+        <div class="stat-label">Collected</div>
+    </div>
+    <div class="stat">
+        <div class="stat-num">{{ stats.pending }}</div>
+        <div class="stat-label">Pending</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Recent Uploads</h2>
+    {% if uploads %}
+    <table>
+        <tr>
+            <th>Date</th>
+            <th>Count</th>
+            <th>Status</th>
+        </tr>
+        {% for upload in uploads %}
+        <tr>
+            <td>{{ upload.date.strftime('%d %b') }}</td>
+            <td>{{ upload.count }} SMS</td>
+            <td>{{ upload.status }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#5f6368; font-size:14px;">No uploads yet. <a href="{{ url_for('upload') }}">Upload first list</a></p>
+    {% endif %}
+</div>
+
+<a href="{{ url_for('upload') }}" class="btn">Upload New List</a>
+{% endblock %}

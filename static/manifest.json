@@ -1,0 +1,24 @@
+{
+  "name": "Fee Reminder",
+  "short_name": "FeeRemind",
+  "start_url": "/",
+  "display": "standalone",
+  "description": "Sent Remind fees message",
+  "theme_color": "#4CAF50",      
+  "background_color": "#FFFFFF",
+  
+  "icons": [
+    { "src": "ic-1.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "ic-2.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "ic-3.png", "sizes": "1024x1024", "type": "image/png" }
+  ],
+  "shortcuts": [
+    {
+      "name": "FeeReminder",
+      "short_name": "User Dashboard",
+      "description": "Fees Reminder Dashbord",
+      "url": "/",
+      "icons": [{ "src": "ic-1.png", "sizes": "192x192" }]
+    }
+  ]
+}

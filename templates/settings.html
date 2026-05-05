@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="nav">
+    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+    <a href="{{ url_for('upload') }}">Upload</a>
+    <a href="{{ url_for('settings') }}">Settings</a>
+</div>
+
+<div class="card">
+    <h2>School Settings</h2>
+    <form method="post">
+        <label>School Name</label>
+        <input type="text" name="school_name" value="{{ config.school_name }}" required>
+        
+        <label>EcoCash Merchant Code</label>
+        <input type="text" name="merchant_code" value="{{ config.merchant_code }}" required>
+        
+        <label>Office Phone</label>
+        <input type="text" name="office_number" value="{{ config.office_number }}" required>
+        
+        <label>Fee Due Date</label>
+        <input type="text" name="due_date" value="{{ config.due_date }}" placeholder="30 May 2026">
+        
+        <button type="submit" class="btn">Save Settings</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>API Keys</h3>
+    <p style="font-size:14px; color:#5f6368;">Set in Render Environment Variables, not here.</p>
+</div>
+{% endblock %}

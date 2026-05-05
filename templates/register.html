@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="card" style="margin-top:40px;">
+    <h2>Create School Account</h2>
+    <form method="post">
+        <label>School Email</label>
+        <input type="text" name="email" required>
+        <label>Password</label>
+        <input type="password" name="password" required>
+        <label>School Name</label>
+        <input type="text" name="school_name" required>
+        <label>Sender ID - Shows on SMS</label>
+        <input type="text" name="sender_id" placeholder="StPeters" maxlength="11" required>
+        <label>EcoCash Merchant Code</label>
+        <input type="text" name="paycode" placeholder="12345" required>
+        <button type="submit" class="btn">Create Account</button>
+    </form>
+    <p style="text-align:center; margin-top:16px; font-size:14px;">
+        Have account? <a href="{{ url_for('login') }}">Login</a>
+    </p>
+</div>
+{% endblock %}
