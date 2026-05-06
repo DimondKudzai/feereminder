@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
 import os, json, csv, requests
-import psycopg as psycopg2
+import psycopg2
 import fitz #PyMuPDF
 import openpyxl
 from datetime import datetime
