@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
 import os, json, csv, requests
 import psycopg2
-import fitz #PyMuPDF
+import psycopg2.extras # needed for DictCursor
+import fitz # PyMuPDF
 import openpyxl
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,11 +14,9 @@ from celery import Celery
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', '2409')
+app.secret_key = os.getenv('SECRET_KEY', '2409-change-this-in-prod')
 
 # ========== RENDER POSTGRES ==========
-
-
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 def get_db():
@@ -101,8 +100,9 @@ def send_sms_task(self, user_id, name, phone, balance, due, sender_id, paycode):
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=60)
 
+    # FIXED: 6 placeholders for 6 values
     cur.execute(
-        'INSERT INTO messages (user_id, student_name, phone, message, msg_id, status) VALUES (%s,%s,%s,%s)',
+        'INSERT INTO messages (user_id, student_name, phone, message, msg_id, status) VALUES (%s,%s,%s,%s,%s,%s)',
         (user_id, name, phone, msg, msg_id, status)
     )
     if status == 'sent':
@@ -135,8 +135,8 @@ def parse_pdf(filepath):
 def parse_excel(filepath):
     wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb.active
-    rows = []
     headers = [str(cell.value or '').lower().strip() for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+    rows = []
     for row in ws.iter_rows(min_row=2):
         values = [str(cell.value or '').strip() for cell in row]
         if any(values):
@@ -238,8 +238,9 @@ def register():
         db = get_db()
         cur = db.cursor()
         try:
+            # FIXED: 5 placeholders for 5 values
             cur.execute(
-                'INSERT INTO users (email, password_hash, school_name, sender_id, paycode) VALUES (%s,%s,%s,%s)',
+                'INSERT INTO users (email, password_hash, school_name, sender_id, paycode) VALUES (%s,%s,%s,%s,%s)',
                 (email, generate_password_hash(password), school_name, sender_id, paycode)
             )
             db.commit()
@@ -323,6 +324,7 @@ def upload():
             name_c, phone_c, bal_c = auto_find_cols(headers)
         except Exception as e:
             flash(f'File error: {str(e)}', 'error')
+            os.remove(path)
             return redirect(url_for('upload'))
 
         queued = 0
@@ -383,7 +385,8 @@ def help():
     if request.method == 'POST':
         db = get_db()
         cur = db.cursor()
-        cur.execute('INSERT INTO tickets (user_id, subject, body) VALUES (%s,%s)',
+        # FIXED: 3 placeholders for 3 values
+        cur.execute('INSERT INTO tickets (user_id, subject, body) VALUES (%s,%s,%s)',
                    (user['id'], request.form['subject'], request.form['body']))
         db.commit()
         flash('Ticket submitted. We reply within 4 hours.', 'success')
@@ -391,4 +394,4 @@ def help():
 
 if __name__ == '__main__':
     init_db()
-    app.run(debug=False, host='0.0.0.0')
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
