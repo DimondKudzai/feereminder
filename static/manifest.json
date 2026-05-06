@@ -1,6 +1,6 @@
 {
   "name": "Fee Reminder",
-  "short_name": "FeeRemind",
+  "short_name": "FeeReminder",
   "start_url": "/",
   "display": "standalone",
   "description": "Sent Remind fees message",
