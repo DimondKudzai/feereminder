@@ -1,8 +1,6 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
-import os, json, csv, requests
-import psycopg2
-import psycopg2.extras # needed for DictCursor
-import fitz # PyMuPDF
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+import os, csv
+import fitz
 import openpyxl
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -10,75 +8,57 @@ from functools import wraps
 from pathlib import Path
 from dotenv import load_dotenv
 from celery import Celery
+from flask_sqlalchemy import SQLAlchemy
 
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', '2409-change-this-in-prod')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# ========== RENDER POSTGRES ==========
-DATABASE_URL = os.getenv('DATABASE_URL')
+db = SQLAlchemy(app)
 
-def get_db():
-    db = getattr(g, '_database', None)
-    if db is None:
-        db = g._database = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
-    return db
+# ========== MODELS ==========
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.Text, unique=True, nullable=False)
+    password_hash = db.Column(db.Text, nullable=False)
+    school_name = db.Column(db.Text, nullable=False)
+    sender_id = db.Column(db.Text, nullable=False)
+    paycode = db.Column(db.Text)
+    sms_credits = db.Column(db.Integer, default=1000)
+    plan = db.Column(db.Text, default='pro')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    messages = db.relationship('Message', backref='user', lazy=True)
+    tickets = db.relationship('Ticket', backref='user', lazy=True)
 
-@app.teardown_appcontext
-def close_connection(exception):
-    db = getattr(g, '_database', None)
-    if db is not None:
-        db.close()
+class Message(db.Model):
+    __tablename__ = 'messages'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    student_name = db.Column(db.Text)
+    phone = db.Column(db.Text)
+    message = db.Column(db.Text)
+    msg_id = db.Column(db.Text)
+    status = db.Column(db.Text, default='queued')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def init_db():
-    db = psycopg2.connect(DATABASE_URL)
-    cur = db.cursor()
-    cur.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        school_name TEXT NOT NULL,
-        sender_id TEXT NOT NULL,
-        paycode TEXT,
-        sms_credits INTEGER DEFAULT 1000,
-        plan TEXT DEFAULT 'pro',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS messages (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL,
-        student_name TEXT,
-        phone TEXT,
-        message TEXT,
-        msg_id TEXT,
-        status TEXT DEFAULT 'queued',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (id)
-    );
-    CREATE TABLE IF NOT EXISTS tickets (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL,
-        subject TEXT,
-        body TEXT,
-        status TEXT DEFAULT 'open',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (id)
-    );
-    ''')
-    db.commit()
-    db.close()
+class Ticket(db.Model):
+    __tablename__ = 'tickets'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    subject = db.Column(db.Text)
+    body = db.Column(db.Text)
+    status = db.Column(db.Text, default='open')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ========== CELERY ==========
 celery = Celery(app.name, broker=os.getenv('REDIS_URL'), backend=os.getenv('REDIS_URL'))
 
 @celery.task(bind=True, max_retries=3)
 def send_sms_task(self, user_id, name, phone, balance, due, sender_id, paycode):
-    db = psycopg2.connect(DATABASE_URL)
-    cur = db.cursor()
-
-    # Format phone: 0772... -> 263772...
     phone = ''.join(filter(str.isdigit, str(phone)))
     if phone.startswith('0'):
         phone = '263' + phone[1:]
@@ -100,15 +80,16 @@ def send_sms_task(self, user_id, name, phone, balance, due, sender_id, paycode):
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=60)
 
-    # FIXED: 6 placeholders for 6 values
-    cur.execute(
-        'INSERT INTO messages (user_id, student_name, phone, message, msg_id, status) VALUES (%s,%s,%s,%s,%s,%s)',
-        (user_id, name, phone, msg, msg_id, status)
-    )
-    if status == 'sent':
-        cur.execute('UPDATE users SET sms_credits = sms_credits - 1 WHERE id = %s', (user_id,))
-    db.commit()
-    db.close()
+    # No manual connection handling
+    with app.app_context():
+        db.session.add(Message(
+            user_id=user_id, student_name=name, phone=phone, 
+            message=msg, msg_id=msg_id, status=status
+        ))
+        if status == 'sent':
+            user = User.query.get(user_id)
+            user.sms_credits -= 1
+        db.session.commit()
     return status
 
 # ========== FILE PARSING ==========
@@ -183,17 +164,11 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def get_current_user():
-    if 'user_id' not in session:
-        return None
-    db = get_db()
-    cur = db.cursor()
-    cur.execute('SELECT * FROM users WHERE id = %s', (session['user_id'],))
-    return cur.fetchone()
-
 @app.context_processor
 def inject_user():
-    return dict(current_user=get_current_user())
+    if 'user_id' in session:
+        return dict(current_user=User.query.get(session['user_id']))
+    return dict(current_user=None)
 
 # ========== PING WEBHOOK ==========
 @app.route('/webhook', methods=['POST'])
@@ -202,10 +177,8 @@ def ping_webhook():
     msg_id = data.get('messageId')
     status = data.get('status')
     if msg_id:
-        db = get_db()
-        cur = db.cursor()
-        cur.execute("UPDATE messages SET status=%s WHERE msg_id=%s", (status, msg_id))
-        db.commit()
+        Message.query.filter_by(msg_id=msg_id).update({'status': status})
+        db.session.commit()
     return '', 200
 
 # ========== PWA ROUTES ==========
@@ -235,19 +208,21 @@ def register():
         sender_id = request.form['sender_id']
         paycode = request.form['paycode']
 
-        db = get_db()
-        cur = db.cursor()
-        try:
-            # FIXED: 5 placeholders for 5 values
-            cur.execute(
-                'INSERT INTO users (email, password_hash, school_name, sender_id, paycode) VALUES (%s,%s,%s,%s,%s)',
-                (email, generate_password_hash(password), school_name, sender_id, paycode)
-            )
-            db.commit()
-            flash('Account created. Login now.', 'success')
-            return redirect(url_for('login'))
-        except psycopg2.IntegrityError:
+        if User.query.filter_by(email=email).first():
             flash('Email already exists', 'error')
+            return render_template('register.html')
+
+        user = User(
+            email=email,
+            password_hash=generate_password_hash(password),
+            school_name=school_name,
+            sender_id=sender_id,
+            paycode=paycode
+        )
+        db.session.add(user)
+        db.session.commit()
+        flash('Account created. Login now.', 'success')
+        return redirect(url_for('login'))
     return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -255,12 +230,9 @@ def login():
     if request.method == 'POST':
         email = request.form['email']
         password = request.form['password']
-        db = get_db()
-        cur = db.cursor()
-        cur.execute('SELECT * FROM users WHERE email = %s', (email,))
-        user = cur.fetchone()
-        if user and check_password_hash(user['password_hash'], password):
-            session['user_id'] = user['id']
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password_hash, password):
+            session['user_id'] = user.id
             return redirect(url_for('dashboard'))
         flash('Invalid credentials', 'error')
     return render_template('login.html')
@@ -280,33 +252,29 @@ def index():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    user = get_current_user()
-    db = get_db()
-    cur = db.cursor()
-    cur.execute('''
-        SELECT COUNT(*) as total,
-               SUM(CASE WHEN status='Delivered' THEN 1 ELSE 0 END) as delivered,
-               SUM(CASE WHEN status='Failed' THEN 1 ELSE 0 END) as failed,
-               SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) as sent
-        FROM messages WHERE user_id = %s AND date(created_at) = CURRENT_DATE
-    ''', (user['id'],))
-    stats = cur.fetchone()
+    user = User.query.get(session['user_id'])
+    today = datetime.utcnow().date()
+    
+    stats = db.session.query(
+        db.func.count(Message.id).label('total'),
+        db.func.sum(db.case((Message.status == 'Delivered', 1), else_=0)).label('delivered'),
+        db.func.sum(db.case((Message.status == 'Failed', 1), else_=0)).label('failed'),
+        db.func.sum(db.case((Message.status == 'sent', 1), else_=0)).label('sent')
+    ).filter(Message.user_id == user.id, db.func.date(Message.created_at) == today).first()
 
-    cur.execute('''
-        SELECT date(created_at) as date, COUNT(*) as count,
-               SUM(CASE WHEN status='Delivered' THEN 1 ELSE 0 END) as delivered
-        FROM messages WHERE user_id = %s
-        GROUP BY date(created_at) ORDER BY date DESC LIMIT 7
-    ''', (user['id'],))
-    uploads = cur.fetchall()
+    uploads = db.session.query(
+        db.func.date(Message.created_at).label('date'),
+        db.func.count(Message.id).label('count'),
+        db.func.sum(db.case((Message.status == 'Delivered', 1), else_=0)).label('delivered')
+    ).filter(Message.user_id == user.id).group_by(db.func.date(Message.created_at)).order_by(db.func.date(Message.created_at).desc()).limit(7).all()
 
-    return render_template('dashboard.html', user=user, stats=stats, uploads=uploads, school_name=user['school_name'])
+    return render_template('dashboard.html', user=user, stats=stats, uploads=uploads, school_name=user.school_name)
 
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
 def upload():
-    user = get_current_user()
-    if user['sms_credits'] <= 0:
+    user = User.query.get(session['user_id'])
+    if user.sms_credits <= 0:
         flash('SMS credits exhausted. Contact support.', 'error')
         return redirect(url_for('dashboard'))
 
@@ -334,64 +302,55 @@ def upload():
             except:
                 continue
 
-            if bal > 0 and user['sms_credits'] > queued:
+            if bal > 0 and user.sms_credits > queued:
                 phone = str(r.get(phone_c, ''))
                 name = str(r.get(name_c, 'Parent'))
                 due = str(r.get('due', r.get('due_date', r.get('duedate', 'ASAP'))))
 
-                send_sms_task.delay(user['id'], name, phone, bal, due, user['sender_id'], user['paycode'])
+                send_sms_task.delay(user.id, name, phone, bal, due, user.sender_id, user.paycode)
                 queued += 1
 
         os.remove(path)
         flash(f'Queued {queued} SMS. Sending in background.', 'success')
         return redirect(url_for('dashboard'))
 
-    return render_template('upload.html', user=user, school_name=user['school_name'])
+    return render_template('upload.html', user=user, school_name=user.school_name)
 
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
-    user = get_current_user()
+    user = User.query.get(session['user_id'])
     if request.method == 'POST':
-        db = get_db()
-        cur = db.cursor()
-        cur.execute(
-            'UPDATE users SET school_name=%s, sender_id=%s, paycode=%s WHERE id=%s',
-            (request.form['school_name'], request.form['sender_id'], request.form['paycode'], user['id'])
-        )
-        db.commit()
+        user.school_name = request.form['school_name']
+        user.sender_id = request.form['sender_id']
+        user.paycode = request.form['paycode']
+        db.session.commit()
         flash('Settings saved', 'success')
         return redirect(url_for('settings'))
-
-    return render_template('settings.html', user=user, school_name=user['school_name'])
+    return render_template('settings.html', user=user, school_name=user.school_name)
 
 @app.route('/api/status')
 @login_required
 def api_status():
-    user = get_current_user()
-    db = get_db()
-    cur = db.cursor()
-    cur.execute('''
-        SELECT status, COUNT(*) FROM messages
-        WHERE user_id=%s AND date(created_at)=CURRENT_DATE GROUP BY status
-    ''', (user['id'],))
-    data = {row[0]: row[1] for row in cur.fetchall()}
+    user = User.query.get(session['user_id'])
+    today = datetime.utcnow().date()
+    data = dict(db.session.query(Message.status, db.func.count(Message.id))
+                .filter(Message.user_id == user.id, db.func.date(Message.created_at) == today)
+                .group_by(Message.status).all())
     return jsonify(data)
 
 @app.route('/help', methods=['GET', 'POST'])
 @login_required
 def help():
-    user = get_current_user()
+    user = User.query.get(session['user_id'])
     if request.method == 'POST':
-        db = get_db()
-        cur = db.cursor()
-        # FIXED: 3 placeholders for 3 values
-        cur.execute('INSERT INTO tickets (user_id, subject, body) VALUES (%s,%s,%s)',
-                   (user['id'], request.form['subject'], request.form['body']))
-        db.commit()
+        ticket = Ticket(user_id=user.id, subject=request.form['subject'], body=request.form['body'])
+        db.session.add(ticket)
+        db.session.commit()
         flash('Ticket submitted. We reply within 4 hours.', 'success')
-    return render_template('help.html', user=user, school_name=user['school_name'])
+    return render_template('help.html', user=user, school_name=user.school_name)
 
 if __name__ == '__main__':
-    init_db()
+    with app.app_context():
+        db.create_all()
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
