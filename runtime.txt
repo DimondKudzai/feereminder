@@ -1,1 +1,1 @@
-python-3.13.12
+psycopg[binary]>=3.2
