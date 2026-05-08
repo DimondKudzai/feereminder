@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
-import os, csv
+import os, csv, time
 import fitz
 import openpyxl
+import requests
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -26,7 +27,7 @@ class User(db.Model):
     email = db.Column(db.Text, unique=True, nullable=False)
     password_hash = db.Column(db.Text, nullable=False)
     school_name = db.Column(db.Text, nullable=False)
-    sender_id = db.Column(db.Text, nullable=False)
+    sender_id = db.Column(db.Text, nullable=False) # Used only after KYC approval
     paycode = db.Column(db.Text)
     sms_credits = db.Column(db.Integer, default=1000)
     plan = db.Column(db.Text, default='pro')
@@ -57,40 +58,78 @@ class Ticket(db.Model):
 # ========== CELERY ==========
 celery = Celery(app.name, broker=os.getenv('REDIS_URL'), backend=os.getenv('REDIS_URL'))
 
-@celery.task(bind=True, max_retries=3)
-def send_sms_task(self, user_id, name, phone, balance, due, sender_id, paycode):
-    phone = ''.join(filter(str.isdigit, str(phone)))
-    if phone.startswith('0'):
-        phone = '263' + phone[1:]
+@celery.task(bind=True, max_retries=3, acks_late=True)
+def send_bulk_sms_task(self, user_id, recipients):
+    """
+    recipients: list of dicts [{"name": "...", "phone": "...", "balance": "...", "due": "...", "paycode": "..."}]
+    Ping sends from default number until KYC is approved. Don't pass sender_id.
+    """
+    api_key = os.getenv('PING_API_KEY')
+    if not api_key:
+        raise ValueError("PING_API_KEY not set")
 
-    msg = f"{sender_id}: {name} fees ${balance} due {due}. Pay {paycode}. Ignore if paid."
+    url = "https://api.ping.co.zw/v1/notification/api/sms/send"
+    headers = {
+        "X-Ping-Api-Key": api_key,
+        "Content-Type": "application/json"
+    }
 
-    url = "https://api.ping.co.zw/v1/sms/send"
-    headers = {"Authorization": f"Bearer {os.getenv('PING_API_KEY')}"}
-    payload = {"to": phone, "message": msg, "from": sender_id}
+    success_count = 0
+    failed_count = 0
 
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
-        resp = r.json()
-        success = r.status_code == 200 and resp.get('status') == 'success'
-        msg_id = resp.get('messageId', '')
-        status = 'sent' if success else 'failed'
-    except Exception as e:
-        msg_id, status = '', 'failed'
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=e, countdown=60)
+    for recipient in recipients:
+        phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
+        if phone.startswith('0'):
+            phone = '263' + phone[1:]
+        elif not phone.startswith('263'):
+            phone = '263' + phone
 
-    # No manual connection handling
-    with app.app_context():
-        db.session.add(Message(
-            user_id=user_id, student_name=name, phone=phone, 
-            message=msg, msg_id=msg_id, status=status
-        ))
-        if status == 'sent':
+        # Include school name in message body since sender ID won't show pre-KYC
+        msg = f"{recipient['name']} fees ${recipient['balance']} due {recipient['due']}. Pay {recipient['paycode']}. Ignore if paid."
+
+        payload = {"to_phone": phone, "message": msg}
+
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=10)
+            resp = r.json()
+            success = r.status_code == 200 and resp.get('status') == 'success'
+
+            msg_id = resp.get('messageId', '')
+            status = 'sent' if success else 'failed'
+
+            if success:
+                success_count += 1
+            else:
+                failed_count += 1
+
+        except Exception as e:
+            msg_id, status = '', 'failed'
+            failed_count += 1
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=e, countdown=60)
+
+        # Save immediately so you don't lose data if worker dies
+        with app.app_context():
+            db.session.add(Message(
+                user_id=user_id,
+                student_name=recipient['name'],
+                phone=phone,
+                message=msg,
+                msg_id=msg_id,
+                status=status
+            ))
+            db.session.commit()
+
+        time.sleep(0.2) # Rate limit: ~5 req/s
+
+    # Deduct credits only for successful sends
+    if success_count > 0:
+        with app.app_context():
             user = User.query.get(user_id)
-            user.sms_credits -= 1
-        db.session.commit()
-    return status
+            user.sms_credits = max(0, user.sms_credits - success_count)
+            db.session.commit()
+
+    return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
 
 # ========== FILE PARSING ==========
 def parse_pdf(filepath):
@@ -191,7 +230,7 @@ def manifest():
         "display": "standalone",
         "background_color": "#0f172a",
         "theme_color": "#2563eb",
-        "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]
+        "icons": [{"src": "/static/ic-1.png", "sizes": "192x192"}]
     })
 
 @app.route('/sw.js')
@@ -254,7 +293,7 @@ def index():
 def dashboard():
     user = User.query.get(session['user_id'])
     today = datetime.utcnow().date()
-    
+
     stats = db.session.query(
         db.func.count(Message.id).label('total'),
         db.func.sum(db.case((Message.status == 'Delivered', 1), else_=0)).label('delivered'),
@@ -295,23 +334,30 @@ def upload():
             os.remove(path)
             return redirect(url_for('upload'))
 
-        queued = 0
+        recipients = []
         for r in rows:
             try:
                 bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
             except:
                 continue
 
-            if bal > 0 and user.sms_credits > queued:
-                phone = str(r.get(phone_c, ''))
-                name = str(r.get(name_c, 'Parent'))
-                due = str(r.get('due', r.get('due_date', r.get('duedate', 'ASAP'))))
-
-                send_sms_task.delay(user.id, name, phone, bal, due, user.sender_id, user.paycode)
-                queued += 1
+            if bal > 0 and user.sms_credits > len(recipients):
+                recipients.append({
+                    "name": str(r.get(name_c, 'Parent')),
+                    "phone": str(r.get(phone_c, '')),
+                    "balance": bal,
+                    "due": str(r.get('due', r.get('due_date', r.get('duedate', 'ASAP')))),
+                    "paycode": user.paycode or ''
+                })
 
         os.remove(path)
-        flash(f'Queued {queued} SMS. Sending in background.', 'success')
+
+        if recipients:
+            send_bulk_sms_task.delay(user.id, recipients)
+            flash(f'Queued {len(recipients)} SMS. Sending in background.', 'success')
+        else:
+            flash('No valid recipients found', 'error')
+
         return redirect(url_for('dashboard'))
 
     return render_template('upload.html', user=user, school_name=user.school_name)
@@ -335,8 +381,8 @@ def api_status():
     user = User.query.get(session['user_id'])
     today = datetime.utcnow().date()
     data = dict(db.session.query(Message.status, db.func.count(Message.id))
-                .filter(Message.user_id == user.id, db.func.date(Message.created_at) == today)
-                .group_by(Message.status).all())
+               .filter(Message.user_id == user.id, db.func.date(Message.created_at) == today)
+               .group_by(Message.status).all())
     return jsonify(data)
 
 @app.route('/help', methods=['GET', 'POST'])
