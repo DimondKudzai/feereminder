@@ -8,7 +8,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from pathlib import Path
 from dotenv import load_dotenv
-from celery import Celery
 from flask_sqlalchemy import SQLAlchemy
 
 load_dotenv()
@@ -27,7 +26,7 @@ class User(db.Model):
     email = db.Column(db.Text, unique=True, nullable=False)
     password_hash = db.Column(db.Text, nullable=False)
     school_name = db.Column(db.Text, nullable=False)
-    sender_id = db.Column(db.Text, nullable=False) # Used only after KYC approval
+    sender_id = db.Column(db.Text, nullable=False)
     paycode = db.Column(db.Text)
     sms_credits = db.Column(db.Integer, default=1000)
     plan = db.Column(db.Text, default='pro')
@@ -55,15 +54,10 @@ class Ticket(db.Model):
     status = db.Column(db.Text, default='open')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# ========== CELERY ==========
-celery = Celery(app.name, broker=os.getenv('REDIS_URL'), backend=os.getenv('REDIS_URL'))
+db.init_app(app)
 
-@celery.task(bind=True, max_retries=3, acks_late=True)
-def send_bulk_sms_task(self, user_id, recipients):
-    """
-    recipients: list of dicts [{"name": "...", "phone": "...", "balance": "...", "due": "...", "paycode": "..."}]
-    Ping sends from default number until KYC is approved. Don't pass sender_id.
-    """
+# ========== SMS SENDER ==========
+def send_sms_sync(user_id, recipients):
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
         raise ValueError("PING_API_KEY not set")
@@ -84,16 +78,13 @@ def send_bulk_sms_task(self, user_id, recipients):
         elif not phone.startswith('263'):
             phone = '263' + phone
 
-        # Include school name in message body since sender ID won't show pre-KYC
         msg = f"{recipient['name']} fees ${recipient['balance']} due {recipient['due']}. Pay {recipient['paycode']}. Ignore if paid."
-
         payload = {"to_phone": phone, "message": msg}
 
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=10)
             resp = r.json()
             success = r.status_code == 200 and resp.get('status') == 'success'
-
             msg_id = resp.get('messageId', '')
             status = 'sent' if success else 'failed'
 
@@ -102,32 +93,27 @@ def send_bulk_sms_task(self, user_id, recipients):
             else:
                 failed_count += 1
 
-        except Exception as e:
+        except Exception:
             msg_id, status = '', 'failed'
             failed_count += 1
-            if self.request.retries < self.max_retries:
-                raise self.retry(exc=e, countdown=60)
 
-        # Save immediately so you don't lose data if worker dies
-        with app.app_context():
-            db.session.add(Message(
-                user_id=user_id,
-                student_name=recipient['name'],
-                phone=phone,
-                message=msg,
-                msg_id=msg_id,
-                status=status
-            ))
-            db.session.commit()
+        # Save immediately
+        db.session.add(Message(
+            user_id=user_id,
+            student_name=recipient['name'],
+            phone=phone,
+            message=msg,
+            msg_id=msg_id,
+            status=status
+        ))
+        db.session.commit()
+        time.sleep(0.2)  # rate limit
 
-        time.sleep(0.2) # Rate limit: ~5 req/s
-
-    # Deduct credits only for successful sends
+    # Deduct credits
     if success_count > 0:
-        with app.app_context():
-            user = User.query.get(user_id)
-            user.sms_credits = max(0, user.sms_credits - success_count)
-            db.session.commit()
+        user = User.query.get(user_id)
+        user.sms_credits = max(0, user.sms_credits - success_count)
+        db.session.commit()
 
     return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
 
@@ -309,6 +295,7 @@ def dashboard():
 
     return render_template('dashboard.html', user=user, stats=stats, uploads=uploads, school_name=user.school_name)
 
+
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
 def upload():
@@ -340,7 +327,6 @@ def upload():
                 bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
             except:
                 continue
-
             if bal > 0 and user.sms_credits > len(recipients):
                 recipients.append({
                     "name": str(r.get(name_c, 'Parent')),
@@ -352,16 +338,23 @@ def upload():
 
         os.remove(path)
 
+        # ADD THE 100 ROW LIMIT HERE
+        MAX_ROWS_PER_UPLOAD = 100
+        if len(recipients) > MAX_ROWS_PER_UPLOAD:
+            flash(f'Too many valid rows: {len(recipients)}. Max allowed is {MAX_ROWS_PER_UPLOAD}. Split your file and try again.', 'error')
+            return redirect(url_for('upload'))
+
         if recipients:
-            send_bulk_sms_task.delay(user.id, recipients)
-            flash(f'Queued {len(recipients)} SMS. Sending in background.', 'success')
+            result = send_sms_sync(user.id, recipients)
+            flash(f"Sent {result['sent']}, failed {result['failed']} out of {result['total']}", 'success')
         else:
             flash('No valid recipients found', 'error')
 
         return redirect(url_for('dashboard'))
 
     return render_template('upload.html', user=user, school_name=user.school_name)
-
+    
+    
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -395,6 +388,11 @@ def help():
         db.session.commit()
         flash('Ticket submitted. We reply within 4 hours.', 'success')
     return render_template('help.html', user=user, school_name=user.school_name)
+
+# ========== CREATE TABLES ON FIRST REQUEST ==========
+@app.before_first_request
+def create_tables():
+    db.create_all()
 
 if __name__ == '__main__':
     with app.app_context():
