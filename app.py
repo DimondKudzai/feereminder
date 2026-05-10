@@ -54,7 +54,6 @@ class Ticket(db.Model):
     status = db.Column(db.Text, default='open')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-db.init_app(app)
 
 # ========== SMS SENDER ==========
 def send_sms_sync(user_id, recipients):
