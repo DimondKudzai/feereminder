@@ -403,14 +403,9 @@ def help():
         flash('Ticket submitted. We reply within 4 hours.', 'success')
     return render_template('help.html', user=user, school_name=user.school_name)
 
-# ====================== TABLE CREATION ======================
-@app.before_serving
-def create_tables():
-    db.create_all()
-
 # ====================== RUN APP ======================
 if __name__ == '__main__':
-    # Ensure tables exist even if before_serving hasn't fired yet
+    # Create tables at startup
     with app.app_context():
         db.create_all()
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
