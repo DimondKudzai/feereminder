@@ -15,10 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ====================== APP & DB SETUP ======================
+
+
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', '2409')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Optional but recommended for Render/Neon
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,       # checks connections are alive
+    "pool_recycle": 280,         # recycle idle connections before timeout
+    "connect_args": {"sslmode": "require"}  # ensures SSL
+}
+
 
 db = SQLAlchemy(app)
 
@@ -59,6 +68,7 @@ class Ticket(db.Model):
 
 with app.app_context():
     db.create_all()
+    
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     api_key = os.getenv('PING_API_KEY')
