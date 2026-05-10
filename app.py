@@ -1,17 +1,20 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 import os, csv, time
+from pathlib import Path
+from datetime import datetime
+from functools import wraps
+
 import fitz
 import openpyxl
 import requests
-from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from sqlalchemy import func, case
 from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
-from pathlib import Path
-from dotenv import load_dotenv
 from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
 
 load_dotenv()
 
+# ====================== APP & DB SETUP ======================
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', '2409')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
@@ -19,7 +22,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# ========== MODELS ==========
+# ====================== MODELS ======================
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -54,18 +57,14 @@ class Ticket(db.Model):
     status = db.Column(db.Text, default='open')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-
-# ========== SMS SENDER ==========
+# ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
         raise ValueError("PING_API_KEY not set")
 
     url = "https://api.ping.co.zw/v1/notification/api/sms/send"
-    headers = {
-        "X-Ping-Api-Key": api_key,
-        "Content-Type": "application/json"
-    }
+    headers = {"X-Ping-Api-Key": api_key, "Content-Type": "application/json"}
 
     success_count = 0
     failed_count = 0
@@ -96,7 +95,6 @@ def send_sms_sync(user_id, recipients):
             msg_id, status = '', 'failed'
             failed_count += 1
 
-        # Save immediately
         db.session.add(Message(
             user_id=user_id,
             student_name=recipient['name'],
@@ -106,9 +104,8 @@ def send_sms_sync(user_id, recipients):
             status=status
         ))
         db.session.commit()
-        time.sleep(0.2)  # rate limit
+        time.sleep(0.2)
 
-    # Deduct credits
     if success_count > 0:
         user = User.query.get(user_id)
         user.sms_credits = max(0, user.sms_credits - success_count)
@@ -116,7 +113,7 @@ def send_sms_sync(user_id, recipients):
 
     return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
 
-# ========== FILE PARSING ==========
+# ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
     rows, headers = [], []
@@ -179,7 +176,7 @@ def auto_find_cols(headers):
         raise ValueError(f"Missing columns. Found: {headers}. Need name, phone, balance columns.")
     return name_c, phone_c, bal_c
 
-# ========== AUTH ==========
+# ====================== AUTH DECORATORS ======================
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -194,7 +191,7 @@ def inject_user():
         return dict(current_user=User.query.get(session['user_id']))
     return dict(current_user=None)
 
-# ========== PING WEBHOOK ==========
+# ====================== WEBHOOK ======================
 @app.route('/webhook', methods=['POST'])
 def ping_webhook():
     data = request.get_json()
@@ -205,7 +202,7 @@ def ping_webhook():
         db.session.commit()
     return '', 200
 
-# ========== PWA ROUTES ==========
+# ====================== PWA ======================
 @app.route('/manifest.json')
 def manifest():
     return jsonify({
@@ -222,7 +219,7 @@ def manifest():
 def sw():
     return app.send_static_file('sw.js')
 
-# ========== AUTH ROUTES ==========
+# ====================== AUTH ROUTES ======================
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -266,12 +263,14 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# ========== APP ROUTES ==========
+# ====================== APP ROUTES ======================
 @app.route('/')
 def index():
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
     return redirect(url_for('login'))
+
+
 
 @app.route('/dashboard')
 @login_required
@@ -279,22 +278,39 @@ def dashboard():
     user = User.query.get(session['user_id'])
     today = datetime.utcnow().date()
 
+    # ====== Simplified Stats ======
     stats = db.session.query(
-        db.func.count(Message.id).label('total'),
-        db.func.sum(db.case((Message.status == 'Delivered', 1), else_=0)).label('delivered'),
-        db.func.sum(db.case((Message.status == 'Failed', 1), else_=0)).label('failed'),
-        db.func.sum(db.case((Message.status == 'sent', 1), else_=0)).label('sent')
-    ).filter(Message.user_id == user.id, db.func.date(Message.created_at) == today).first()
+        func.count(Message.id).label('total'),
+        func.count(case((Message.status == 'Delivered', 1))).label('delivered'),
+        func.count(case((Message.status == 'Failed', 1))).label('failed'),
+        func.count(case((Message.status == 'sent', 1))).label('sent')
+    ).filter(
+        Message.user_id == user.id,
+        func.date(Message.created_at) == today
+    ).first()
 
+    # ====== Recent Uploads ======
     uploads = db.session.query(
-        db.func.date(Message.created_at).label('date'),
-        db.func.count(Message.id).label('count'),
-        db.func.sum(db.case((Message.status == 'Delivered', 1), else_=0)).label('delivered')
-    ).filter(Message.user_id == user.id).group_by(db.func.date(Message.created_at)).order_by(db.func.date(Message.created_at).desc()).limit(7).all()
+        func.date(Message.created_at).label('date'),
+        func.count(Message.id).label('count'),
+        func.count(case((Message.status == 'Delivered', 1))).label('delivered')
+    ).filter(
+        Message.user_id == user.id
+    ).group_by(
+        func.date(Message.created_at)
+    ).order_by(
+        func.date(Message.created_at).desc()
+    ).limit(7).all()
 
-    return render_template('dashboard.html', user=user, stats=stats, uploads=uploads, school_name=user.school_name)
-
-
+    return render_template(
+        'dashboard.html',
+        user=user,
+        stats=stats,
+        uploads=uploads,
+        school_name=user.school_name
+    )
+    
+    
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
 def upload():
@@ -337,7 +353,7 @@ def upload():
 
         os.remove(path)
 
-        # ADD THE 100 ROW LIMIT HERE
+        # ADD THE 100 ROW LIMIT
         MAX_ROWS_PER_UPLOAD = 100
         if len(recipients) > MAX_ROWS_PER_UPLOAD:
             flash(f'Too many valid rows: {len(recipients)}. Max allowed is {MAX_ROWS_PER_UPLOAD}. Split your file and try again.', 'error')
@@ -352,8 +368,7 @@ def upload():
         return redirect(url_for('dashboard'))
 
     return render_template('upload.html', user=user, school_name=user.school_name)
-    
-    
+
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -388,12 +403,14 @@ def help():
         flash('Ticket submitted. We reply within 4 hours.', 'success')
     return render_template('help.html', user=user, school_name=user.school_name)
 
-# ========== CREATE TABLES ON FIRST REQUEST ==========
-@app.before_first_request
+# ====================== TABLE CREATION ======================
+@app.before_serving
 def create_tables():
     db.create_all()
 
+# ====================== RUN APP ======================
 if __name__ == '__main__':
+    # Ensure tables exist even if before_serving hasn't fired yet
     with app.app_context():
         db.create_all()
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
