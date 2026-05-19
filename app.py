@@ -87,9 +87,9 @@ def send_sms_sync(user_id, recipients):
     for recipient in recipients:
         phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
         if phone.startswith('0'):
-            phone = '263' + phone[1:]
-        elif not phone.startswith('263'):
-            phone = '263' + phone
+            phone = '+263' + phone[1:]
+        elif not phone.startswith('+263'):
+            phone = '+263' + phone
 
         # New message template with dynamic fields
         msg = (
