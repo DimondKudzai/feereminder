@@ -72,7 +72,7 @@ with app.app_context():
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     import os, requests, time
-    from your_models import db, Message, User  # adjust imports
+ #  from your_models import db, Message, User  # adjust imports
 
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
