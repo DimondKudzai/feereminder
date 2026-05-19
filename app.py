@@ -71,6 +71,9 @@ with app.app_context():
     
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
+    import os, requests, time
+    from your_models import db, Message, User  # adjust imports
+
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
         raise ValueError("PING_API_KEY not set")
@@ -88,7 +91,14 @@ def send_sms_sync(user_id, recipients):
         elif not phone.startswith('263'):
             phone = '263' + phone
 
-        msg = f"{recipient['name']} fees ${recipient['balance']} due {recipient['due']}. Pay {recipient['paycode']}. Ignore if paid."
+        # New message template with dynamic fields
+        msg = (
+            f"Good day {recipient['name']}, We hope you are well.\n"
+            f"This is our new platform where we remind you about your monthly fee payments. "
+            f"Thank you for continuous support\n"
+            f"##Building strong minds for a brighter future."
+        )
+        
         payload = {"to_phone": phone, "message": msg}
 
         try:
@@ -124,7 +134,6 @@ def send_sms_sync(user_id, recipients):
         db.session.commit()
 
     return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
-
 # ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
@@ -354,7 +363,7 @@ def upload():
                 bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
             except:
                 continue
-            if bal > 0 and user.sms_credits > len(recipients):
+            if bal: # > 0 and user.sms_credits > len(recipients):
                 recipients.append({
                     "name": str(r.get(name_c, 'Parent')),
                     "phone": str(r.get(phone_c, '')),
