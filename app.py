@@ -2,7 +2,9 @@ import os, csv, time
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
-
+from flask_admin import Admin
+from flask_admin.contrib.sqla import ModelView
+from flask_login import LoginManager
 import fitz
 import openpyxl
 import requests
@@ -11,6 +13,7 @@ from sqlalchemy import func, case
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -40,7 +43,7 @@ class User(db.Model):
     school_name = db.Column(db.Text, nullable=False)
     sender_id = db.Column(db.Text, nullable=False)
     paycode = db.Column(db.Text)
-    sms_credits = db.Column(db.Integer, default=1000)
+    sms_credits = db.Column(db.Integer, default=300)
     plan = db.Column(db.Text, default='pro')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     messages = db.relationship('Message', backref='user', lazy=True)
@@ -68,6 +71,18 @@ class Ticket(db.Model):
 
 with app.app_context():
     db.create_all()
+    
+    
+    
+class MyModelView(ModelView):
+    def is_accessible(self):
+        return current_user.is_authenticated and current_user.id == 1 or current_user.id == 2
+
+admin = Admin(app, name='Fee Reminder')
+admin.add_view(MyModelView(User, db.session))
+admin.add_view(MyModelView(Message, db.session))
+admin.add_view(MyModelView(Ticket, db.session))
+    
     
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
@@ -134,7 +149,7 @@ def send_sms_sync(user_id, recipients):
         db.session.commit()
 
     return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
-# ====================== FILE PARSING ======================
+ s# ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
     rows, headers = [], []
