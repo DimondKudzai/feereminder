@@ -89,8 +89,7 @@ admin.add_view(MyModelView(Ticket, db.session))
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     import os, requests, time
- #  from your_models import db, Message, User  # adjust imports
-
+ 
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
         raise ValueError("PING_API_KEY not set")
@@ -151,7 +150,7 @@ def send_sms_sync(user_id, recipients):
         db.session.commit()
 
     return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
- s# ====================== FILE PARSING ======================
+ # ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
     rows, headers = [], []
