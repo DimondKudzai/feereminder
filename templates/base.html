@@ -28,11 +28,13 @@
         .nav { display: flex; gap: 8px; margin-bottom: 16px; }
         .nav a { flex: 1; text-align: center; padding: 8px; background: white; border-radius: 6px; text-decoration: none; color: #1a73e8; font-size: 14px; }
     </style>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    
 </head>
 <body>
     <div class="header">
         <div class="container">
-            <h1>FeeReminder - {{ school_name or 'Fee Reminder' }}</h1>
+            <h1>Fee Reminder - {{ school_name or 'Fee Reminder' }}</h1>
         </div>
     </div>
     <div class="container">

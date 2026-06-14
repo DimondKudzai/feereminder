@@ -16,9 +16,13 @@
     {
       "name": "FeeReminder",
       "short_name": "User Dashboard",
-      "description": "Fees Reminder Dashbord",
+      "description": "Fees Reminder Dashboard",
       "url": "/",
-      "icons": [{ "src": "ic-1.png", "sizes": "192x192" }]
+      "icons": [
+      { "src": "ic-1.png", "sizes": "192x192", "type": "image/png" },
+      { "src": "ic-2.png", "sizes": "512x512", "type": "image/png" },
+      { "src": "ic-3.png", "sizes": "1024x1024", "type": "image/png" }
+      ]
     }
   ]
 }

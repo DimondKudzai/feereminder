@@ -3,7 +3,7 @@
 {% block content %}
 <div class="nav">
     <a href="{{ url_for('dashboard') }}">Dashboard</a>
-    <a href="{{ url_for('upload') }}">Upload</a>
+    <a href="{{ url_for('upload') }}">Select Debtors</a>
     <a href="{{ url_for('settings') }}">Settings</a>
 </div>
 
@@ -11,23 +11,19 @@
     <h2>School Settings</h2>
     <form method="post">
         <label>School Name</label>
-        <input type="text" name="school_name" value="{{ config.school_name }}" required>
+        <input type="text" name="school_name" value="{{ config.school_name }}">
         
-        <label>EcoCash Merchant Code</label>
-        <input type="text" name="merchant_code" value="{{ config.merchant_code }}" required>
+        <label>Change Password</label>
+        <input type="text" name="password" value="{{ config.password_hash }}" >
         
-        <label>Office Phone</label>
-        <input type="text" name="office_number" value="{{ config.office_number }}" required>
-        
-        <label>Fee Due Date</label>
-        <input type="text" name="due_date" value="{{ config.due_date }}" placeholder="30 May 2026">
+        <label>Confirm New Password</label>
+        <input type="text" name=" " value="{{ config.password_hash }}">
+   
+        <label>Fee Type</label>
+        <input type="text" name="theme" value="{{ config.message_theme }}" placeholder="eg: Tution, Stationary...">
         
         <button type="submit" class="btn">Save Settings</button>
     </form>
 </div>
 
-<div class="card">
-    <h3>API Keys</h3>
-    <p style="font-size:14px; color:#5f6368;">Set in Render Environment Variables, not here.</p>
-</div>
 {% endblock %}

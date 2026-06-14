@@ -42,8 +42,9 @@ class User(db.Model):
     password_hash = db.Column(db.Text, nullable=False)
     school_name = db.Column(db.Text, nullable=False)
     sender_id = db.Column(db.Text, nullable=False)
+    message_theme = db.Column(db.Text, default='Tution')
     paycode = db.Column(db.Text)
-    sms_credits = db.Column(db.Integer, default=300)
+    sms_credits = db.Column(db.Integer, default=500)
     plan = db.Column(db.Text, default='pro')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     messages = db.relationship('Message', backref='user', lazy=True)
@@ -89,6 +90,10 @@ admin.add_view(MyModelView(Ticket, db.session))
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     import os, requests, time
+    if 'user_id' in session:
+        user = User.query.get(session['user_id'])
+        username = user.name
+        theme = user.message_theme
  
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
@@ -103,17 +108,16 @@ def send_sms_sync(user_id, recipients):
     for recipient in recipients:
         phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
         if phone.startswith('0'):
-            phone = '+263' + phone[1:]
+            phone = '263' + phone[1:]
         elif not phone.startswith('+263'):
-            phone = '+263' + phone
+            phone = '263' + phone
 
         # New message template with dynamic fields
-        msg = (
-            f"Good day {recipient['name']}, We hope you are well.\n"
-            f"This is our new platform where we remind you about your monthly fee payments. "
-            f"Thank you for continuous support\n"
-            f"##Building strong minds for a brighter future."
-        )
+       msg = (
+		   f"{username}: Reminder for {recipient['name']} - {theme} fees. "
+		   f"Balance: ${recipient['balance']}. "
+		   f"Query admin."
+       )
         
         payload = {"to_phone": phone, "message": msg}
 
@@ -259,6 +263,8 @@ def sw():
 # ====================== AUTH ROUTES ======================
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    if session.get('user_id') > 2:
+        return redirect('/dashboard')
     if request.method == 'POST':
         email = request.form['email']
         password = request.form['password']
@@ -379,7 +385,7 @@ def upload():
                 bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
             except:
                 continue
-            if bal: # > 0 and user.sms_credits > len(recipients):
+            if bal: > 0 and user.sms_credits > len(recipients):
                 recipients.append({
                     "name": str(r.get(name_c, 'Parent')),
                     "phone": str(r.get(phone_c, '')),
@@ -412,8 +418,8 @@ def settings():
     user = User.query.get(session['user_id'])
     if request.method == 'POST':
         user.school_name = request.form['school_name']
-        user.sender_id = request.form['sender_id']
-        user.paycode = request.form['paycode']
+        user.password_hash = generate_password_hash(request.form['password'])
+        user.message_theme = request.form['theme']
         db.session.commit()
         flash('Settings saved', 'success')
         return redirect(url_for('settings'))

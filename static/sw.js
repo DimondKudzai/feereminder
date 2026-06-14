@@ -1,6 +1,21 @@
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open('v1').then(c => c.addAll(['/','/static/style.css'])))
+const CACHE_NAME = 'FeeRemind-v3';
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll([
+        '/dashboard',
+        '/login',
+        '/static/banner.jpg'
+      ]))
+      .catch((error) => console.error('Cache error:', error))
+  );
 });
-self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)))
+
+self.addEventListener('fetch', (event) => {
+  console.log('Fetching:', event.request.url);
+  event.respondWith(
+    caches.match(event.request)
+      .then((response) => response || fetch(event.request))
+  );
 });

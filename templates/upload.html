@@ -1,38 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Upload Debtors{% endblock %}
+{% block title %}Select Debtors{% endblock %}
 {% block content %}
 <div class="nav">
     <a href="{{ url_for('dashboard') }}">Dashboard</a>
-    <a href="{{ url_for('upload') }}">Upload</a>
+    <a href="{{ url_for('upload') }}">Select Debtors</a>
     <a href="{{ url_for('settings') }}">Settings</a>
 </div>
 
 <div class="card">
-    <h2>Upload Debtors List</h2>
+    <h2>Select Debtors List</h2>
     <p style="color:#5f6368; font-size:14px; margin:8px 0 16px 0;">
-        Upload PDF or Excel with columns: Name, Grade, Balance, Phone
+        Select PDF or Excel with columns: Name, Balance, and Phone
     </p>
     
     <form method="post" enctype="multipart/form-data">
         <label>Select File</label>
-        <input type="file" name="file" accept=".pdf,.xlsx,.csv" required>
+        <input type="file" name="file" accept=".pdf,.xlsx,.csv,.xls" required>
         
-        <label>SMS Template</label>
+     <!-- <label>SMS Template</label>
         <select name="template" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:6px; margin:8px 0 16px 0;">
             <option value="first">First Reminder - Polite</option>
             <option value="second">Second Reminder - Firm</option>
             <option value="final">Final Notice - Urgent</option>
-        </select>
+        </select> -->
         
-        <button type="submit" class="btn">Upload & Queue SMS</button>
+        <button type="submit" class="btn">Sent Reminders</button>
     </form>
 </div>
 
 <div class="card">
     <h3>How it works</h3>
     <p style="font-size:14px; color:#5f6368;">
-        1. Export debtors from Pastel/QuickBooks as PDF or Excel<br>
-        2. Upload here<br>
+        1. Export debtors from Pastel/QuickBooks or any system as PDF or Excel (.PDF .CSV .xlsx .xls)<br>
+        2. Select the file from here<br>
         3. SMS sent automatically in background<br>
         4. Check Dashboard for delivery status
     </p>
