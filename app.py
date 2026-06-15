@@ -111,13 +111,12 @@ def send_sms_sync(user_id, recipients):
             phone = '263' + phone[1:]
         elif not phone.startswith('+263'):
             phone = '263' + phone
-
-        # New message template with dynamic fields
-       msg = (
+        
+        msg = (
 		   f"{username}: Reminder for {recipient['name']} - {theme} fees. "
 		   f"Balance: ${recipient['balance']}. "
 		   f"Query admin."
-       )
+        )
         
         payload = {"to_phone": phone, "message": msg}
 
