@@ -416,7 +416,7 @@ def upload():
                 bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
             except:
                 continue
-            if bal: > 0 and user.sms_credits > len(recipients):
+            if bal > 0 and user.sms_credits > len(recipients):
                 recipients.append({
                     "name": str(r.get(name_c, 'Parent')),
                     "phone": str(r.get(phone_c, '')),
