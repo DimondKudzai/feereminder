@@ -104,19 +104,17 @@ def send_sms_sync(user_id, recipients):
 
     success_count = 0
     failed_count = 0
-
-    for recipient in recipients:
-        phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
-        if phone.startswith('0'):
-            phone = '263' + phone[1:]
-        elif not phone.startswith('+263'):
-            phone = '263' + phone
-        
-        msg = (
-		   f"{username}: Reminder for {recipient['name']} - {theme} fees. "
-		   f"Balance: ${recipient['balance']}. "
-		   f"Query admin."
-        )
+	
+	for recipient in recipients:
+	        phone = ...
+	        elif not phone.startswith('+263'):
+	            phone = '263' + phone
+	        
+	        msg = (
+			   f"{username}: Reminder for {recipient['name']} - {theme} fees. "
+			   f"Balance: ${recipient['balance']}. "
+			   f"Query admin."
+	        )
         
         payload = {"to_phone": phone, "message": msg}
 
