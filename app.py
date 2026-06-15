@@ -90,50 +90,79 @@ admin.add_view(MyModelView(Ticket, db.session))
 # ====================== SMS SENDER ======================
 def send_sms_sync(user_id, recipients):
     import os, requests, time
-    if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        username = user.name
-        theme = user.message_theme
- 
+
+    # Get user from DB (NOT session — session won't work in background jobs)
+    user = User.query.get(user_id)
+
+    username = user.school_name  # or user.name if you added it
+    theme = getattr(user, "message_theme", "Fee Reminder")
+
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
         raise ValueError("PING_API_KEY not set")
 
     url = "https://api.ping.co.zw/v1/notification/api/sms/send"
-    headers = {"X-Ping-Api-Key": api_key, "Content-Type": "application/json"}
+    headers = {
+        "X-Ping-Api-Key": api_key,
+        "Content-Type": "application/json"
+    }
 
     success_count = 0
     failed_count = 0
-	
-	for recipient in recipients:
-	        phone = ...
-	        elif not phone.startswith('+263'):
-	            phone = '263' + phone
-	        
-	        msg = (
-			   f"{username}: Reminder for {recipient['name']} - {theme} fees. "
-			   f"Balance: ${recipient['balance']}. "
-			   f"Query admin."
-	        )
-        
-        payload = {"to_phone": phone, "message": msg}
 
+    for recipient in recipients:
+
+        # ---------------- PHONE CLEANING ----------------
+        phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
+
+        if phone.startswith('0'):
+            phone = '263' + phone[1:]
+        elif not phone.startswith('263'):
+            phone = '263' + phone
+
+        # ---------------- MESSAGE ----------------
+        msg = (
+            f"{username}: Reminder for {recipient['name']} - {theme} fees. "
+            f"Balance: ${recipient['balance']}. "
+            f"Query admin."
+        )
+
+        payload = {
+            "to_phone": phone,
+            "message": msg
+        }
+
+        msg_id = ""
+        status = "failed"
+
+        # ---------------- API CALL ----------------
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=10)
-            resp = r.json()
-            success = r.status_code == 200 and resp.get('status') == 'success'
+
+            try:
+                resp = r.json()
+            except:
+                resp = {}
+
+            success = (
+                r.status_code == 200 and
+                resp.get('status') == 'success'
+            )
+
             msg_id = resp.get('messageId', '')
-            status = 'sent' if success else 'failed'
 
             if success:
+                status = "sent"
                 success_count += 1
             else:
+                status = "failed"
                 failed_count += 1
 
         except Exception:
-            msg_id, status = '', 'failed'
+            status = "failed"
             failed_count += 1
 
+        # ---------------- SAVE MESSAGE ----------------
         db.session.add(Message(
             user_id=user_id,
             student_name=recipient['name'],
@@ -143,14 +172,19 @@ def send_sms_sync(user_id, recipients):
             status=status
         ))
         db.session.commit()
+
         time.sleep(0.2)
 
+    # ---------------- DEDUCT CREDITS ----------------
     if success_count > 0:
-        user = User.query.get(user_id)
         user.sms_credits = max(0, user.sms_credits - success_count)
         db.session.commit()
 
-    return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
+    return {
+        "sent": success_count,
+        "failed": failed_count,
+        "total": len(recipients)
+    }
  # ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
