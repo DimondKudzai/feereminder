@@ -93,6 +93,106 @@ admin.add_view(MyModelView(Ticket, db.session))
     
     
 # ====================== SMS SENDER ======================
+#Esolutions
+def send_sms_sync(user_id, recipients):
+    import os, requests, time
+    from datetime import datetime
+
+    # Get user from DB 
+    user = User.query.get(user_id)
+    username = user.school_name  # this becomes your originator/SenderID
+    theme = getattr(user, "message_theme", "Tution")
+
+    esol_user = os.getenv('ESOL_API_USER')
+    esol_pass = os.getenv('ESOL_API_PASS')
+    sender_id = os.getenv('ESOL_SENDER_ID', username[:11])  # eSolutions SenderID max 11 chars
+
+    if not esol_user or not esol_pass:
+        raise ValueError("ESOL_API_USER or ESOL_API_PASS not set")
+
+    url = "https://mobile.esolutions.co.zw/bmg/api/single"
+    
+    success_count = 0
+    failed_count = 0
+
+    for recipient in recipients:
+        # ---------------- PHONE CLEANING ----------------
+        phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
+        if phone.startswith('0'):
+            phone = '263' + phone[1:]
+        elif not phone.startswith('263'):
+            phone = '263' + phone
+
+        # ---------------- MESSAGE ----------------
+        # inside send_sms_sync, replace the msg line with:
+        symbol = 'USD $' if recipient['currency'] == 'USD' else 'ZWG $'
+        msg = (
+        f"{username}: Reminder for {recipient['name']} - {theme} fees. "
+        f"Balance: {symbol}{recipient['balance']:.2f}. Query admin."
+        )
+
+        # eSolutions wants timestamp in YYYYMMDDHHMMSS format
+        msg_date = datetime.now().strftime("%Y%m%d%H%M%S")
+        msg_ref = f"{user_id}-{int(time.time())}"  # unique ref
+
+        payload = {
+            "originator": sender_id,
+            "destination": phone,
+            "messageText": msg,
+            "messageReference": msg_ref,
+            "messageDate": msg_date
+        }
+
+        msg_id = ""
+        status = "failed"
+
+        try:
+            r = requests.post(
+                url, 
+                auth=(esol_user, esol_pass),  # Basic Auth
+                headers={"Content-Type": "application/json"},
+                json=payload, 
+                timeout=15
+            )
+
+            resp = r.json() if r.content else {}
+            
+            # eSolutions returns 200 + {"status":"OK"} on success
+            success = r.status_code == 200 and resp.get("status") == "OK"
+            msg_id = resp.get("messageReference", msg_ref)
+
+            if success:
+                status = "sent"
+                success_count += 1
+            else:
+                status = "failed"
+                failed_count += 1
+
+        except Exception:
+            status = "failed"
+            failed_count += 1
+
+        # ---------------- SAVE MESSAGE ----------------
+        db.session.add(Message(
+            user_id=user_id,
+            student_name=recipient['name'],
+            phone=phone,
+            message=msg,
+            msg_id=msg_id,
+            status=status
+        ))
+        db.session.commit()
+        time.sleep(0.3)  # eSolutions recommends 0.3s between calls
+
+    # ---------------- DEDUCT CREDITS ----------------
+    if success_count > 0:
+        user.sms_credits = max(0, user.sms_credits - success_count)
+        db.session.commit()
+
+    return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
+
+# Ping
+"""
 def send_sms_sync(user_id, recipients):
     import os, requests, time
 
@@ -100,7 +200,7 @@ def send_sms_sync(user_id, recipients):
     user = User.query.get(user_id)
 
     username = user.school_name  # or user.name if you added it
-    theme = getattr(user, "message_theme", "Fee Reminder")
+    theme = getattr(user, "message_theme", "Tution")
 
     api_key = os.getenv('PING_API_KEY')
     if not api_key:
@@ -189,7 +289,10 @@ def send_sms_sync(user_id, recipients):
         "sent": success_count,
         "failed": failed_count,
         "total": len(recipients)
-    }
+    }        
+    
+"""
+        
  # ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
@@ -302,11 +405,11 @@ def register():
     if session.get('user_id') > 2:
         return redirect('/dashboard')
     if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        school_name = request.form['school_name']
-        sender_id = request.form['sender_id']
-        paycode = request.form['paycode']
+        email = request.form['email'].strip()
+        password = request.form['password'].strip()
+        school_name = request.form['school_name'].strip()
+        sender_id = request.form['sender_id'].strip()
+        paycode = request.form['paycode'].strip()
 
         if User.query.filter_by(email=email).first():
             flash('Email already exists', 'error')
@@ -410,6 +513,8 @@ def upload():
         try:
             rows, headers = parse_any_file(path)
             name_c, phone_c, bal_c = auto_find_cols(headers)
+            # try to auto-find currency column too
+            curr_c = next((h for h in headers if h.lower() in ['currency','curr','ccy']), None)
         except Exception as e:
             flash(f'File error: {str(e)}', 'error')
             os.remove(path)
@@ -418,21 +523,30 @@ def upload():
         recipients = []
         for r in rows:
             try:
-                bal = float(str(r.get(bal_c, '0')).replace('$','').replace(',','') or 0)
+                raw_bal = str(r.get(bal_c, '0'))
+                # detect currency symbol from raw balance string
+                currency = 'USD'  # default
+                if 'ZWG' in raw_bal.upper() or 'ZW$' in raw_bal:
+                    currency = 'ZWG'
+                elif 'USD' in raw_bal.upper() or '$' in raw_bal and 'ZWG' not in raw_bal.upper():
+                    currency = 'USD'
+
+                bal = float(raw_bal.replace('$','').replace('USD','').replace('ZWG','').replace('ZW$','').replace(',','').strip() or 0)
             except:
                 continue
+
             if bal > 0 and user.sms_credits > len(recipients):
                 recipients.append({
                     "name": str(r.get(name_c, 'Parent')),
                     "phone": str(r.get(phone_c, '')),
                     "balance": bal,
+                    "currency": currency, 
                     "due": str(r.get('due', r.get('due_date', r.get('duedate', 'ASAP')))),
                     "paycode": user.paycode or ''
                 })
 
         os.remove(path)
 
-        # ADD THE 100 ROW LIMIT
         MAX_ROWS_PER_UPLOAD = 100
         if len(recipients) > MAX_ROWS_PER_UPLOAD:
             flash(f'Too many valid rows: {len(recipients)}. Max allowed is {MAX_ROWS_PER_UPLOAD}. Split your file and try again.', 'error')
@@ -447,15 +561,19 @@ def upload():
         return redirect(url_for('dashboard'))
 
     return render_template('upload.html', user=user, school_name=user.school_name)
-
+      
+    
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
     user = User.query.get(session['user_id'])
     if request.method == 'POST':
-        user.school_name = request.form['school_name']
-        user.password_hash = generate_password_hash(request.form['password'])
-        user.message_theme = request.form['theme']
+        user.school_name = request.form['school_name'].strip()
+        user.password_hash = generate_password_hash(request.form['password'].strip())
+        user.message_theme = request.form['theme'].strip()
+        if request.form['password'].strip() != request.form['confirm_pass'].strip():
+            flash('Passwords do not match', 'error')
+            return redirect(url_for('settings'))
         db.session.commit()
         flash('Settings saved', 'success')
         return redirect(url_for('settings'))

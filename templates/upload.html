@@ -24,6 +24,10 @@
             <option value="final">Final Notice - Urgent</option>
         </select> -->
         
+        <p style="color:#5f6368; font-size:14px; margin:8px 0 16px 0;">
+        Fee Name: {{user.message_theme}} change in <a href="{{ url_for('settings') }}">Settings</a>
+        </p>
+        
         <button type="submit" class="btn">Sent Reminders</button>
     </form>
 </div>
