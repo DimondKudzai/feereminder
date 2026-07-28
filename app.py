@@ -124,12 +124,12 @@ def send_sms_sync(user_id, recipients):
             phone = '263' + phone
 
         # ---------------- MESSAGE ----------------
-        # inside send_sms_sync, replace the msg line with:
         symbol = 'USD $' if recipient['currency'] == 'USD' else 'ZWG $'
         msg = (
-        f"{username}: GV7 Study Center Reminder for {recipient['name']} - {theme} fees. "
-        f"Balance: {symbol}{recipient['balance']:.2f}. Query admin."
+        f"{username}: Fees Reminder platform for {recipient['name']} - {theme} fees. "
+        f"Balance: {symbol}{recipient['balance']:.2f}. Query Admin Sir Killer"
         )
+        
 
         # eSolutions wants timestamp in YYYYMMDDHHMMSS format
         msg_date = datetime.now().strftime("%Y%m%d%H%M%S")
