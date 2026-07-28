@@ -402,7 +402,7 @@ def sw():
 # ====================== AUTH ROUTES ======================
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    if session.get('user_id') > 2:
+    if session.get('user_id', 0) > 2:
         return redirect('/dashboard')
     if request.method == 'POST':
         email = request.form['email'].strip()
@@ -578,6 +578,7 @@ def settings():
         flash('Settings saved', 'success')
         return redirect(url_for('settings'))
     return render_template('settings.html', user=user, school_name=user.school_name)
+
 
 @app.route('/api/status')
 @login_required

@@ -3,7 +3,7 @@
   "short_name": "FeeReminder",
   "start_url": "/",
   "display": "standalone",
-  "description": "Sent Remind fees message",
+  "description": "Sent fees Balance Reminder SMS",
   "theme_color": "#4CAF50",      
   "background_color": "#FFFFFF",
   

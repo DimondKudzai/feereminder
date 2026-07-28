@@ -27,6 +27,7 @@
         td, th { padding: 8px; border-bottom: 1px solid #eee; text-align: left; }
         .nav { display: flex; gap: 8px; margin-bottom: 16px; }
         .nav a { flex: 1; text-align: center; padding: 8px; background: white; border-radius: 6px; text-decoration: none; color: #1a73e8; font-size: 14px; }
+        .footer{ background: #1a73e8; color: white; padding: 26px; padding: 25px; font-weight: bolder; }
     </style>
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     
@@ -48,5 +49,40 @@
         
         {% block content %}{% endblock %}
     </div>
+<footer class="footer">
+For Support, Feedback and Enquiries call +263783702724 or sent email to support: <a href="mailto:jmadechawo@gmail.com" style="color: green">Sent Message</a>
+</footer>    
+
+<script type="text/javascript">
+let deferredPrompt;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Prevent the mini-infobar from appearing
+  e.preventDefault();
+  // Stash the event so it can be triggered later
+  deferredPrompt = e;
+  // Show your custom install button
+  showInstallButton();
+});
+
+function showInstallButton() {
+  const installButton = document.getElementById('install-button');
+  installButton.style.display = 'block';
+  installButton.addEventListener('click', () => {
+    // Show the install prompt
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then((choiceResult) => {
+      if (choiceResult.outcome === 'accepted') {
+        console.log('User accepted the install prompt');
+      } else {
+        console.log('User dismissed the install prompt');
+      }
+      deferredPrompt = null;
+    });
+  });
+}
+
+</script>
+
 </body>
 </html>
