@@ -127,7 +127,7 @@ def send_sms_sync(user_id, recipients):
         # inside send_sms_sync, replace the msg line with:
         symbol = 'USD $' if recipient['currency'] == 'USD' else 'ZWG $'
         msg = (
-        f"{username}: Reminder for {recipient['name']} - {theme} fees. "
+        f"{username}: GV7 Study Center Reminder for {recipient['name']} - {theme} fees. "
         f"Balance: {symbol}{recipient['balance']:.2f}. Query admin."
         )
 
