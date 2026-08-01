@@ -413,7 +413,7 @@ def register():
         paycode = request.form['paycode'].strip()
 
         if User.query.filter_by(email=email).first():
-	            flash('Email already exists', 'error')
+            flash('Email already exists', 'error')
             return render_template('register.html')
 
         user = User(
