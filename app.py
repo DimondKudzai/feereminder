@@ -70,8 +70,20 @@ class Ticket(db.Model):
     status = db.Column(db.Text, default='open')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class SmsBatch(db.Model):
+    __tablename__ = 'sms_batches'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    batch_number = db.Column(db.Text, unique=True)
+    batch_id = db.Column(db.Text)
+    status = db.Column(db.Text, default="PROCESSING")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 with app.app_context():
     db.create_all()
+    
+    
     
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -95,204 +107,193 @@ admin.add_view(MyModelView(Ticket, db.session))
 # ====================== SMS SENDER ======================
 #Esolutions
 def send_sms_sync(user_id, recipients):
-    import os, requests, time
-    from datetime import datetime
 
-    # Get user from DB 
+    import uuid
+
     user = User.query.get(user_id)
-    username = user.school_name  # this becomes your originator/SenderID
-    theme = getattr(user, "message_theme", "Tution")
 
     esol_user = os.getenv('ESOL_API_USER')
     esol_pass = os.getenv('ESOL_API_PASS')
-    sender_id = os.getenv('ESOL_SENDER_ID', username[:11])  # eSolutions SenderID max 11 chars
 
     if not esol_user or not esol_pass:
-        raise ValueError("ESOL_API_USER or ESOL_API_PASS not set")
+        raise ValueError("Missing eSolutions credentials")
 
-    url = "https://mobile.esolutions.co.zw/bmg/api/single"
-    
-    success_count = 0
-    failed_count = 0
 
-    for recipient in recipients:
-        # ---------------- PHONE CLEANING ----------------
+    bulk_url = "https://mobile.esolutions.co.zw/bmg/api/bulk"
+
+
+    batch_number = "B" + str(uuid.uuid4().hex[:12]).upper()
+
+
+    messages = []
+
+
+    for index, recipient in enumerate(recipients):
+
         phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
+
+
         if phone.startswith('0'):
             phone = '263' + phone[1:]
+
         elif not phone.startswith('263'):
             phone = '263' + phone
 
-        # ---------------- MESSAGE ----------------
-        symbol = 'USD $' if recipient['currency'] == 'USD' else 'ZWG $'
+
+        symbol = "USD $" if recipient['currency']=="USD" else "ZWG $"
+
+
         msg = (
-        f"{username}: Fees Reminder platform for {recipient['name']} - {theme} fees. "
-        f"Balance: {symbol}{recipient['balance']:.2f}. Query Admin Sir Killer"
+            f"{user.school_name}: Fees reminder for "
+            f"{recipient['name']}. "
+            f"Balance: {symbol}{recipient['balance']:.2f}. "
+            f"Query Admin."
         )
-        
 
-        # eSolutions wants timestamp in YYYYMMDDHHMMSS format
-        msg_date = datetime.now().strftime("%Y%m%d%H%M%S")
-        msg_ref = f"{user_id}-{int(time.time())}"  # unique ref
 
-        payload = {
-            "originator": sender_id,
+        reference = f"{user_id}-{uuid.uuid4().hex[:8]}"
+
+
+        messages.append({
+
+            "originator": user.sender_id,
+
             "destination": phone,
+
             "messageText": msg,
-            "messageReference": msg_ref,
-            "messageDate": msg_date
-        }
 
-        msg_id = ""
-        status = "failed"
+            "messageReference": reference
 
-        try:
-            r = requests.post(
-                url, 
-                auth=(esol_user, esol_pass),  # Basic Auth
-                headers={"Content-Type": "application/json"},
-                json=payload, 
-                timeout=15
+        })
+
+
+        db.session.add(
+            Message(
+                user_id=user_id,
+                student_name=recipient['name'],
+                phone=phone,
+                message=msg,
+                msg_id=reference,
+                status="PROCESSING"
             )
+        )
 
-            resp = r.json() if r.content else {}
-            
-            # eSolutions returns 200 + {"status":"OK"} on success
-            success = r.status_code == 200 and resp.get("status") == "OK"
-            msg_id = resp.get("messageReference", msg_ref)
 
-            if success:
-                status = "sent"
-                success_count += 1
-            else:
-                status = "failed"
-                failed_count += 1
+    payload = {
 
-        except Exception:
-            status = "failed"
-            failed_count += 1
+        "batchNumber": batch_number,
 
-        # ---------------- SAVE MESSAGE ----------------
-        db.session.add(Message(
-            user_id=user_id,
-            student_name=recipient['name'],
-            phone=phone,
-            message=msg,
-            msg_id=msg_id,
-            status=status
-        ))
-        db.session.commit()
-        time.sleep(0.3)  # eSolutions recommends 0.3s between calls
+        "messages": messages
 
-    # ---------------- DEDUCT CREDITS ----------------
-    if success_count > 0:
-        user.sms_credits = max(0, user.sms_credits - success_count)
-        db.session.commit()
-
-    return {"sent": success_count, "failed": failed_count, "total": len(recipients)}
-
-# Ping
-"""
-def send_sms_sync(user_id, recipients):
-    import os, requests, time
-
-    # Get user from DB (NOT session — session won't work in background jobs)
-    user = User.query.get(user_id)
-
-    username = user.school_name  # or user.name if you added it
-    theme = getattr(user, "message_theme", "Tution")
-
-    api_key = os.getenv('PING_API_KEY')
-    if not api_key:
-        raise ValueError("PING_API_KEY not set")
-
-    url = "https://api.ping.co.zw/v1/notification/api/sms/send"
-    headers = {
-        "X-Ping-Api-Key": api_key,
-        "Content-Type": "application/json"
     }
 
-    success_count = 0
-    failed_count = 0
 
-    for recipient in recipients:
+    try:
 
-        # ---------------- PHONE CLEANING ----------------
-        phone = ''.join(filter(str.isdigit, str(recipient['phone'])))
+        r = requests.post(
 
-        if phone.startswith('0'):
-            phone = '263' + phone[1:]
-        elif not phone.startswith('263'):
-            phone = '263' + phone
+            bulk_url,
 
-        # ---------------- MESSAGE ----------------
-        msg = (
-            f"{username}: Reminder for {recipient['name']} - {theme} fees. "
-            f"Balance: ${recipient['balance']}. "
-            f"Query admin."
+            auth=(esol_user, esol_pass),
+
+            headers={
+                "Content-Type":"application/json"
+            },
+
+            json=payload,
+
+            timeout=30
+
         )
 
-        payload = {
-            "to_phone": phone,
-            "message": msg
+
+        print("ESOL RESPONSE:")
+        print(r.status_code)
+        print(r.text)
+
+
+        response = r.json()
+
+
+        batch = SmsBatch(
+
+            user_id=user_id,
+
+            batch_number=batch_number,
+
+            batch_id=response.get("batchId"),
+
+            status=response.get("status","UNKNOWN")
+
+        )
+
+
+        db.session.add(batch)
+
+
+        db.session.commit()
+
+
+        return {
+
+            "batch": batch_number,
+
+            "status": response.get("status"),
+
+            "total": len(messages)
+
         }
 
-        msg_id = ""
-        status = "failed"
 
-        # ---------------- API CALL ----------------
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=10)
 
-            try:
-                resp = r.json()
-            except:
-                resp = {}
+    except Exception as e:
 
-            success = (
-                r.status_code == 200 and
-                resp.get('status') == 'success'
-            )
+        db.session.rollback()
 
-            msg_id = resp.get('messageId', '')
+        print("SMS ERROR:", e)
 
-            if success:
-                status = "sent"
-                success_count += 1
-            else:
-                status = "failed"
-                failed_count += 1
-
-        except Exception:
-            status = "failed"
-            failed_count += 1
-
-        # ---------------- SAVE MESSAGE ----------------
-        db.session.add(Message(
-            user_id=user_id,
-            student_name=recipient['name'],
-            phone=phone,
-            message=msg,
-            msg_id=msg_id,
-            status=status
-        ))
-        db.session.commit()
-
-        time.sleep(0.2)
-
-    # ---------------- DEDUCT CREDITS ----------------
-    if success_count > 0:
-        user.sms_credits = max(0, user.sms_credits - success_count)
-        db.session.commit()
-
-    return {
-        "sent": success_count,
-        "failed": failed_count,
-        "total": len(recipients)
-    }        
-    
-"""
+        raise
         
+        
+# ============ check batch ====================
+
+@app.route('/check_batch/<batch_number>')
+@login_required
+def check_batch(batch_number):
+
+    esol_user = os.getenv('ESOL_API_USER')
+    esol_pass = os.getenv('ESOL_API_PASS')
+
+
+    url = f"https://mobile.esolutions.co.zw/bmg/api/bulk/{batch_number}"
+
+
+    r = requests.get(
+        url,
+        auth=(esol_user, esol_pass),
+        timeout=20
+    )
+
+
+    data = r.json()
+
+
+    batch = SmsBatch.query.filter_by(
+        batch_number=batch_number
+    ).first()
+
+
+    if batch:
+
+        batch.status = data.get("status")
+
+        db.session.commit()
+
+
+    return jsonify(data)
+        
+        
+
  # ====================== FILE PARSING ======================
 def parse_pdf(filepath):
     doc = fitz.open(filepath)
@@ -412,7 +413,7 @@ def register():
         paycode = request.form['paycode'].strip()
 
         if User.query.filter_by(email=email).first():
-            flash('Email already exists', 'error')
+	            flash('Email already exists', 'error')
             return render_template('register.html')
 
         user = User(
@@ -554,7 +555,10 @@ def upload():
 
         if recipients:
             result = send_sms_sync(user.id, recipients)
-            flash(f"Sent {result['sent']}, failed {result['failed']} out of {result['total']}", 'success')
+            flash(
+            f"Batch created: {result['batch']} Status: {result['status']}",
+            "success"
+            )
         else:
             flash('No valid recipients found', 'error')
 
