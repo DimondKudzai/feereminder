@@ -15,6 +15,7 @@ from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 
 
+
 load_dotenv()
 
 # ====================== APP & DB SETUP ======================
@@ -83,6 +84,14 @@ class SmsBatch(db.Model):
 with app.app_context():
     db.create_all()
     
+    
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
     
     
 login_manager = LoginManager()
